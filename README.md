@@ -30,6 +30,5 @@ For single player mode, use the `w` and `s` keys to move up and down respectivel
 - `pong -eve -fow 1 -u 10`
 
 ## To-Do:
-- improve grid clear / generate
 - show keybinds during game
 - show gifs in examples

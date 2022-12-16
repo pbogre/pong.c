@@ -9,8 +9,10 @@
 #include <signal.h>
 #include <sys/ioctl.h>
 
+typedef uint16_t uint;
+
 // global variables, does not use #define because they can be changed with arguments
-uint8_t ROWS = 16,
+uint ROWS = 16,
 	COLS = 64,
 
 	PADDLE_X = 2,
@@ -29,49 +31,51 @@ bool pvp = false,
      eve = false,
      debug = false;
 
+// structures
 struct paddle{
-  uint8_t x, y;
+  uint x, y;
   unsigned long long score;
 } player[2];
 
 struct _ball{
-  uint8_t x, y;
-  int dx, dy;
+  uint x, y;
+  int8_t dx, dy;
 } ball;
 
-//todo: once game is running, only update what isn't bounds or background
-void clear_grid(uint8_t grid[ROWS][COLS]){
-  for(uint8_t y = 0; y < ROWS; y++){
-    for(uint8_t x = 0; x < COLS; x++){
+
+
+void generate_grid(uint grid[ROWS][COLS]){
+  for(uint y = 0; y < ROWS; y++){
+    for(uint x = 0; x < COLS; x++){
       if(y == 0 || y == ROWS-1) grid[y][x] = 1; 
       else grid[y][x] = 0;
     }
   }
 }
 
-void draw_game(uint8_t grid[ROWS][COLS]){
-  clear_grid(grid);
+
+void draw_game(uint grid[ROWS][COLS]){
   printf("\033[H");
   
   // insert players
-  for(uint8_t i = 0; i < 2; i++){
-    for(uint8_t y = player[i].y; y < player[i].y + PADDLE_Y; y++){
-      for(uint8_t x = player[i].x; x < player[i].x + PADDLE_X; x++){
+  for(uint i = 0; i < 2; i++){
+    for(uint y = player[i].y; y < player[i].y + PADDLE_Y; y++){
+      for(uint x = player[i].x; x < player[i].x + PADDLE_X; x++){
 	grid[y][x] = 2;
       }
     }
   }
 
   // insert ball
-  for(uint8_t y = ball.y; y < ball.y + BALL_SIZE; y++){
-    for(uint8_t x = ball.x; x < ball.x + BALL_SIZE; x++){
+  for(uint y = ball.y; y < ball.y + BALL_SIZE; y++){
+    for(uint x = ball.x; x < ball.x + BALL_SIZE; x++){
       grid[y][x] = 3;
     }
   }
 
   // draw values
-  for(uint8_t y = 0; y < ROWS; y++){
-    for(uint8_t x = 0; x < COLS; x++){
+  for(uint y = 0; y < ROWS; y++){
+    for(uint x = 0; x < COLS; x++){
       switch(grid[y][x]){
 	case 0:
 	  printf(" "); // background
@@ -97,7 +101,7 @@ void draw_game(uint8_t grid[ROWS][COLS]){
   }
 
   // draw scores in the middle
-  uint8_t score1_length = floor(log10(player[0].score));
+  uint score1_length = floor(log10(player[0].score));
   for(int i = 1; i < (COLS/2)-(score1_length+1); i++){
     printf(" ");
   }
@@ -106,23 +110,22 @@ void draw_game(uint8_t grid[ROWS][COLS]){
   // debug stuff
   if(debug){
     printf("\n");
-    printf("\n Player 1: (%hhu, %hhu)    |    Player 2: (%hhu, %hhu)               ", player[0].x, player[0].y, player[1].x, player[1].y);
-    printf("\n Ball: (%hhu (%d), %hhu (%d))                         ", ball.x, ball.dx, ball.y, ball.dy);
-    printf("\n Updates: %llu  |  Game Update Frequency: %hhu                     ", updates, _UPDATE_FREQUENCY);
+    printf("\n Player 1: (%hu, %hu)    |    Player 2: (%hu, %hu)               ", player[0].x, player[0].y, player[1].x, player[1].y);
+    printf("\n Ball: (%hu (%d), %hu (%d))                         ", ball.x, ball.dx, ball.y, ball.dy);
+    printf("\n Updates: %llu  |  Game Update Frequency: %hu                     ", updates, _UPDATE_FREQUENCY);
   }
 }
 
-void move_player(uint8_t index, bool direction){
-  if (!direction){ // move up
-    if(player[index].y >= 2) player[index].y -= 1;
-    return;
-  }
-  // move down
-  if(player[index].y + PADDLE_Y <= ROWS-2)player[index].y += 1;
-}
 
-void update_ball(){
-  // player collision
+void update_ball(uint grid[ROWS][COLS]){
+  // clear previous ball position
+  for(uint y = ball.y; y < ball.y + BALL_SIZE; y++){
+    for(uint x = ball.x; x < ball.x + BALL_SIZE; x++){
+      grid[y][x] = 0;
+    }
+  }
+
+  // horizontal collision
   for(int i = 0; i < 2; i++){
     bool near_ball = (player[i].x > COLS/2) ?            // paddle is on the right?
 		     (ball.x >= player[i].x - PADDLE_X)  // right paddle
@@ -146,21 +149,46 @@ void update_ball(){
     }
   }
 
-  // y collision
+  // vertical collision
   if(ball.y <= 1 || ball.y + BALL_SIZE >= ROWS-1) ball.dy *= -1;
 
+  // update ball
   ball.y += ball.dy;
   ball.x += ball.dx;
 }
 
-void automate_player(unsigned int index){
+
+void move_player(uint index, bool direction, uint grid[ROWS][COLS]){
+  if (!direction){ // move up
+    if(player[index].y >= 2){
+      player[index].y -= 1;
+      // clear grid below
+      for(uint x = player[index].x; x < player[index].x + PADDLE_X; x++){
+	grid[player[index].y+PADDLE_Y][x] = 0;
+      }
+    }
+    return;
+  }
+  // move down
+  if(player[index].y + PADDLE_Y <= ROWS-2){
+    player[index].y += 1;
+    // clear grid above
+    for(uint x = player[index].x; x < player[index].x + PADDLE_X; x++){
+      grid[player[index].y-1][x] = 0;
+    }
+  }
+}
+
+
+void automate_player(unsigned int index, uint grid[ROWS][COLS]){
   int diff = abs(player[index].x - ball.x);
   if(diff <= COLS/BOT_FOW){
     bool direction = ((ball.y*2+BALL_SIZE)/2 < (player[index].y*2+PADDLE_Y)/2) ? 
 		      0 : 1;
-    move_player(index, direction);
+    move_player(index, direction, grid);
   }
 }
+
 
 // shamelessly stolen from https://github.com/mevdschee/2048.c/blob/main/2048.c 
 void setBufferedInput(bool enable){
@@ -182,11 +210,6 @@ void setBufferedInput(bool enable){
   }
 }
 
-void end_game(int signum){
-  setBufferedInput(true);
-  printf("\033[?25h\033[m");
-  exit(signum);
-}
 
 // https://www.flipcode.com/archives/_kbhit_for_Linux.shtml
 int _kbhit() {
@@ -197,6 +220,14 @@ int _kbhit() {
     return bytesWaiting;
 }
 
+
+void end_game(int signum){
+  setBufferedInput(true);
+  printf("\033[?25h\033[m");
+  exit(signum);
+}
+
+
 int main(int argc, char *argv[]){
   // pass arguments
   if(argc > 1){
@@ -204,15 +235,15 @@ int main(int argc, char *argv[]){
 	if(strcmp(argv[i],"-pvp")==0)   pvp = true;
 	if(strcmp(argv[i],"-eve")==0)   eve = true;
 	if(strcmp(argv[i],"-debug") ==0 || strcmp(argv[i],"-d")==0) debug = true;
-	if(strcmp(argv[i],"-w")==0)    {sscanf(argv[i+1], "%hhu", &COLS); ++i; }
-	if(strcmp(argv[i],"-h")==0)    {sscanf(argv[i+1], "%hhu", &ROWS); ++i; }
-	if(strcmp(argv[i],"-u")==0)    {sscanf(argv[i+1], "%hhu", &UPDATE_FREQUENCY); ++i; }
-	if(strcmp(argv[i],"-fow")==0)    {sscanf(argv[i+1], "%hhu", &BOT_FOW); ++i; }
+
+	if(strcmp(argv[i],"-w")==0)    {sscanf(argv[i+1], "%hu", &COLS); ++i; }
+	if(strcmp(argv[i],"-h")==0)    {sscanf(argv[i+1], "%hu", &ROWS); ++i; }
+	if(strcmp(argv[i],"-u")==0)    {sscanf(argv[i+1], "%hu", &UPDATE_FREQUENCY); ++i; }
+	if(strcmp(argv[i],"-fow")==0)  {sscanf(argv[i+1], "%hu", &BOT_FOW); ++i; }
       }
     }
 
-
-  uint8_t grid[ROWS][COLS];
+  uint grid[ROWS][COLS];
 
   // init values
   player[0].x = 1;
@@ -234,6 +265,7 @@ int main(int argc, char *argv[]){
 
   // setup terminal for  game
   printf("\033[?25l\033[2J");
+  generate_grid(grid);
   draw_game(grid);
   setBufferedInput(false);
   char m;
@@ -245,27 +277,27 @@ int main(int argc, char *argv[]){
       switch (m) {
       // first player (w-s)
 	case 119:
-	  move_player(0, 0);
+	  move_player(0, 0, grid);
 	  break; 
 	case 115:
-	  move_player(0, 1);
+	  move_player(0, 1, grid);
 	  break;
 
 	// second player(up-down)
 	case 65:
-	  if(pvp) move_player(1, 0);
+	  if(pvp) move_player(1, 0, grid);
 	  break;
 
 	case 66:
-	  if(pvp) move_player(1, 1);
+	  if(pvp) move_player(1, 1, grid);
 	  break;
       }
     }
 
     if(updates % _UPDATE_FREQUENCY == 0){
-      update_ball();
-      if(!pvp || eve) automate_player(1);
-      if(eve) automate_player(0);
+      update_ball(grid);
+      if(!pvp || eve) automate_player(1, grid);
+      if(eve) automate_player(0, grid);
     }
     draw_game(grid);
     updates++;
